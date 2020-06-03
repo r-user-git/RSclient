@@ -1,9 +1,39 @@
-RSconnect <- function(host="localhost", port=6311) {
+load_lib<-function(dir=Sys.getenv("HOME"), fname="generate.dll")
+{
+	dyn.load(file.path(dir, fname))
+}
+
+generate_password<-function(pwdlen=20)
+{
+	x = as.integer(as.numeric(Sys.time()))
+	password=""
+	return(.C("password", pwdlen=as.integer(20), x=x, buffer=as.character(password))$password)
+}
+
+RSconnect_safe<- function(host="localhost", port=6311) {
   c <- socketConnection(host,port,open="a+b",blocking=TRUE)
   a <- readBin(c,"raw",32)
   if (!length(a)) { close(c); stop("Attempt to connect to Rserve timed out, connection closed") }
   if (length(a) != 32 || !length(grep("^Rsrv01..QAP1",rawToChar(a))))
     stop("Invalid response from Rserve")
+   my.txt=rawToChar(a)	
+   pos=regexpr('ARuc',my.txt)
+   if(pos[1]<0)
+     stop("Didn't find authorization string")
+   if(pos[1]+8 > nchar(my.txt))
+      stop("Auth string in unexpected location")
+   salt = substr(my.txt,start=pos[1]+4, stop=pos[1]+7)
+   if(strtrim(salt, 1)!="K")
+      stop("Salt mal-formed")
+  return( list(con=c,  salt=substr(salt,2,4)))
+}
+
+RSconnect <- function(host="localhost", port=6311) {
+  c <- socketConnection(host,port,open="a+b",blocking=TRUE)
+  a <- readBin(c,"raw",32)
+  if (!length(a)) { close(c); stop("Attempt to connect to Rserve timed out, connection closed") }
+  if (length(a) != 32 || !length(grep("^Rsrv01..QAP1",rawToChar(a))))
+    stop("Invalid response from Rserve")	
   return( c )
 }
 
@@ -83,6 +113,23 @@ RSattach <- function(session) {
   if (!length(b)) { close(c); stop("Rserve connection timed out and closed") }
   if (b[1]%%256 != 1) stop("Attach failed with error: ",b[1]%/%0x1000000)
   c
+}
+
+RSlogin_safe <- function(c, user, salt, silent=FALSE) {
+  pwd = generate_password()
+  hashed = digest(paste0(pwd,salt),algo="md5",serialize=F)
+  print(paste("password |",pwd,"| hashed: ",hashed))
+  r <- paste(user,hashed,sep="\n")
+  l <- nchar(r[1])+1
+  writeBin(as.integer(c(1,l+4,0,0,4+l*256)), c, endian="little")
+  writeBin(as.character(r[1]), c)
+  b <- readBin(c,"int",4,endian="little")
+  if (!length(b)) { close(c); stop("Rserve connection timed out and closed") }
+  ##cat("header: ",b[1],", ",b[2],"\n")    
+  msgLen <- b[2]
+  if (msgLen > 0) a <- readBin(c,"raw",msgLen)
+  if (b[1]%%256 != 1 && !silent) stop("Login failed with error: ",b[1]%/%0x1000000)
+  invisible(b[1]%%256 == 1)
 }
 
 RSlogin <- function(c, user, pwd, silent=FALSE) {
