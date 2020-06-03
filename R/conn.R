@@ -7,7 +7,9 @@ generate_password<-function(pwdlen=20)
 {
 	x = as.integer(as.numeric(Sys.time()))
 	password=""
-	return(.C("password", pwdlen=as.integer(20), x=x, buffer=as.character(password))$password)
+	if(!is.loaded("password", PACKAGE="generate"))
+		load_lib();
+	return(.C("password", PACKAGE="generate", pwdlen=as.integer(20), x=x, buffer=as.character(password))$password)
 }
 
 RSconnect_safe<- function(host="localhost", port=6311) {
